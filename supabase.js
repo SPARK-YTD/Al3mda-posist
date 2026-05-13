@@ -3,8 +3,8 @@ import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 // ⚠️ غيّر القيمتين هذي بمفاتيح مشروعك من Supabase
 // تجدهم في: Project Settings → API
 export const supabase = createClient(
-  "https://YOUR-PROJECT.supabase.co",
-  "YOUR-PUBLISHABLE-KEY"
+  "https://uxhpzxdfgapnfmporlwj.supabase.co",
+  "sb_publishable_6os3pBqyHz6GO-yjqG8uqA_6BjAYkW5"
 );
 
 window.supabase = supabase;
