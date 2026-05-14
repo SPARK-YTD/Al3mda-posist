@@ -5,6 +5,8 @@ import { cart, addToCart, renderCart, clearCart, getCartTotals } from "./cart.js
 let categories = [];
 let items = [];
 let currentCategory = null;
+let pendingOrders = [];
+let pendingTimer = null;
 
 window.addEventListener("error", (e) => console.error("🔥 ERROR:", e.error));
 window.addEventListener("unhandledrejection", (e) => console.error("🔥 PROMISE ERROR:", e.reason));
@@ -113,7 +115,6 @@ function renderItems() {
       img.onerror = () => { img.style.display = "none"; };
       div.appendChild(img);
     } else {
-      // إيموجي افتراضي حسب الفئة
       const emoji = document.createElement("span");
       emoji.className = "item-emoji";
       const cat = categories.find(c => c.slug === item.category);
@@ -138,7 +139,6 @@ function renderItems() {
 
 /* ========== نقر على منتج ========== */
 async function handleItemClick(item) {
-  // نشوف لو المنتج له إضافات
   const { data: groups, error } = await supabase
     .from("product_modifier_groups")
     .select("group_id, sort_order, modifier_groups(*)")
@@ -151,19 +151,16 @@ async function handleItemClick(item) {
     return;
   }
 
-  // لو ما له إضافات، أضفه مباشرة
   if (!groups || groups.length === 0) {
     addToCart(item, []);
     return;
   }
 
-  // افتح البوب أب
   openModifiersPopup(item, groups);
 }
 
 /* ========== بوب أب الإضافات ========== */
 async function openModifiersPopup(item, productGroups) {
-  // اجلب الإضافات لكل مجموعة
   const groupIds = productGroups.map(g => g.group_id);
   const { data: allModifiers } = await supabase
     .from("modifiers")
@@ -172,13 +169,11 @@ async function openModifiersPopup(item, productGroups) {
     .eq("is_active", true)
     .order("sort_order");
 
-  // نظّم الإضافات حسب المجموعة
   const groupsWithMods = productGroups.map(pg => ({
     group: pg.modifier_groups,
     modifiers: (allModifiers || []).filter(m => m.group_id === pg.group_id)
   }));
 
-  // حالة الاختيارات (key = modifier_id, value = qty)
   const selections = new Map();
 
   const overlay = document.createElement("div");
@@ -187,23 +182,19 @@ async function openModifiersPopup(item, productGroups) {
   const box = document.createElement("div");
   box.className = "popup-box";
 
-  // عنوان
   const title = document.createElement("h3");
   title.innerHTML = `🍔 ${escapeHtml(item.name)}`;
   box.appendChild(title);
 
-  // السعر الأساسي
   const basePriceEl = document.createElement("div");
   basePriceEl.style.cssText = "color:var(--text-secondary);font-size:13px;margin-bottom:16px;text-align:center";
   basePriceEl.textContent = `السعر الأساسي: ${Number(item.price).toFixed(3)} ${state.currency}`;
   box.appendChild(basePriceEl);
 
-  // المجموعات
   groupsWithMods.forEach(({ group, modifiers }) => {
     const groupEl = document.createElement("div");
     groupEl.className = "mod-group";
 
-    // رأس المجموعة
     const header = document.createElement("div");
     header.className = "mod-group-header";
 
@@ -226,7 +217,6 @@ async function openModifiersPopup(item, productGroups) {
     header.appendChild(tagEl);
     groupEl.appendChild(header);
 
-    // عناصر المجموعة
     modifiers.forEach(mod => {
       const modEl = document.createElement("div");
       modEl.className = "mod-item";
@@ -236,7 +226,6 @@ async function openModifiersPopup(item, productGroups) {
       const left = document.createElement("div");
       left.className = "mod-item-name";
 
-      // checkbox أو radio حسب نوع المجموعة
       const indicator = document.createElement("div");
       if (isSingle) {
         indicator.className = "mod-radio";
@@ -255,7 +244,6 @@ async function openModifiersPopup(item, productGroups) {
       const right = document.createElement("div");
       right.style.cssText = "display:flex;align-items:center;gap:12px";
 
-      // السعر
       const priceEl = document.createElement("div");
       if (Number(mod.price) > 0) {
         priceEl.className = "mod-price";
@@ -266,7 +254,6 @@ async function openModifiersPopup(item, productGroups) {
       }
       right.appendChild(priceEl);
 
-      // أزرار الكمية (للإضافات متعددة الكمية)
       if (!isSingle && Number(mod.price) > 0) {
         const qtyBox = document.createElement("div");
         qtyBox.className = "mod-qty";
@@ -282,7 +269,6 @@ async function openModifiersPopup(item, productGroups) {
             qtySpan.textContent = cur - 1;
             updateTotalDisplay();
           } else {
-            // حذف الإضافة كاملة
             selections.delete(mod.id);
             modEl.classList.remove("selected");
             indicator.textContent = "";
@@ -309,19 +295,16 @@ async function openModifiersPopup(item, productGroups) {
         qtyBox.appendChild(plus);
         right.appendChild(qtyBox);
 
-        modEl.dataset.qtyBox = "true";
         modEl._qtyBox = qtyBox;
         modEl._qtySpan = qtySpan;
       }
 
       modEl.appendChild(right);
 
-      // النقر للاختيار
       modEl.onclick = () => {
         const currentQty = selections.get(mod.id) || 0;
 
         if (isSingle) {
-          // اختيار واحد فقط - أزل أي اختيار آخر في نفس المجموعة
           groupEl.querySelectorAll(".mod-item").forEach(el => {
             el.classList.remove("selected");
             const modId = el.dataset.modId;
@@ -330,9 +313,7 @@ async function openModifiersPopup(item, productGroups) {
           selections.set(mod.id, 1);
           modEl.classList.add("selected");
         } else {
-          // اختيار متعدد
           if (currentQty > 0) {
-            // إلغاء
             selections.delete(mod.id);
             modEl.classList.remove("selected");
             indicator.textContent = "";
@@ -341,7 +322,6 @@ async function openModifiersPopup(item, productGroups) {
               modEl._qtySpan.textContent = "1";
             }
           } else {
-            // تحقق من الحد الأقصى
             const groupSelections = Array.from(groupEl.querySelectorAll(".mod-item.selected")).length;
             if (groupSelections >= group.max_select) {
               showAlert(`الحد الأقصى ${group.max_select} في "${group.name}"`);
@@ -365,7 +345,6 @@ async function openModifiersPopup(item, productGroups) {
     box.appendChild(groupEl);
   });
 
-  // السعر الإجمالي
   const totalBox = document.createElement("div");
   totalBox.className = "popup-total";
   totalBox.innerHTML = `
@@ -374,7 +353,6 @@ async function openModifiersPopup(item, productGroups) {
   `;
   box.appendChild(totalBox);
 
-  // الأزرار
   const actions = document.createElement("div");
   actions.className = "popup-actions";
 
@@ -382,7 +360,6 @@ async function openModifiersPopup(item, productGroups) {
   addBtn.className = "btn success";
   addBtn.textContent = "✨ إضافة للسلة";
   addBtn.onclick = () => {
-    // تحقق من الحدود الدنيا
     for (const { group } of groupsWithMods) {
       if (group.min_select > 0) {
         const count = Array.from(box.querySelectorAll(`.mod-item.selected`))
@@ -394,7 +371,6 @@ async function openModifiersPopup(item, productGroups) {
       }
     }
 
-    // اجمع الإضافات المختارة
     const modifiers = [];
     selections.forEach((qty, modId) => {
       const mod = groupsWithMods
@@ -427,7 +403,6 @@ async function openModifiersPopup(item, productGroups) {
   overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
   document.body.appendChild(overlay);
 
-  /* تحديث السعر الإجمالي في البوب أب */
   function updateTotalDisplay() {
     let total = Number(item.price);
     selections.forEach((qty, modId) => {
@@ -441,16 +416,14 @@ async function openModifiersPopup(item, productGroups) {
   }
 }
 
-/* ========== إتمام الطلب ========== */
-window.completeOrder = async function () {
+/* ========== حفظ الطلب (بدون دفع) ========== */
+window.saveOrder = async function () {
   if (cart.length === 0) {
     showAlert("السلة فاضية");
     return;
   }
 
   const { subtotal, tax, total } = getCartTotals();
-  const method = await pickPaymentMethod();
-  if (!method) return;
 
   const btn = document.getElementById("completeBtn");
   btn.disabled = true;
@@ -459,7 +432,15 @@ window.completeOrder = async function () {
   try {
     const { data: order, error } = await supabase
       .from("orders")
-      .insert({ subtotal, tax, total, payment_method: method })
+      .insert({
+        subtotal,
+        tax,
+        total,
+        status: "open",
+        payment_method: null,
+        cash_amount: 0,
+        card_amount: 0
+      })
       .select()
       .single();
 
@@ -483,65 +464,351 @@ window.completeOrder = async function () {
 
     if (itemsError) throw itemsError;
 
-    showAlert(`✅ تم حفظ الطلب رقم #${order.order_number}`);
+    showToast(`✅ تم حفظ الطلب #${order.order_number}`);
     clearCart();
+    loadPendingOrders();
 
   } catch (err) {
     console.error(err);
     showAlert("❌ فشل حفظ الطلب: " + err.message);
   } finally {
     btn.disabled = false;
-    btn.textContent = "✨ إتمام الطلب";
+    btn.textContent = "✨ حفظ الطلب";
   }
 };
 
-/* ========== اختيار طريقة الدفع ========== */
-function pickPaymentMethod() {
-  return new Promise((resolve) => {
-    const overlay = document.createElement("div");
-    overlay.className = "popup-overlay";
+/* ========== تحميل الطلبات المعلقة ========== */
+async function loadPendingOrders() {
+  const { data, error } = await supabase
+    .from("orders")
+    .select("*, order_items(*)")
+    .in("status", ["open", "paid"])
+    .order("created_at", { ascending: true });
 
-    const box = document.createElement("div");
-    box.className = "popup-box";
-    box.style.maxWidth = "380px";
+  if (error) {
+    console.error(error);
+    return;
+  }
 
-    const { total } = getCartTotals();
+  pendingOrders = data || [];
+  renderPendingOrders();
+}
 
-    box.innerHTML = `
-      <h3>💰 طريقة الدفع</h3>
-      <div class="popup-total">
-        <div class="popup-total-label">المبلغ المطلوب</div>
-        <div class="popup-total-value">${total.toFixed(3)} ${state.currency}</div>
-      </div>
+function renderPendingOrders() {
+  const box = document.getElementById("pendingOrders");
+  const countEl = document.getElementById("pendingCount");
+
+  if (countEl) countEl.textContent = pendingOrders.length;
+
+  if (!box) return;
+
+  if (pendingOrders.length === 0) {
+    box.innerHTML = `<div class="pending-empty">لا توجد طلبات معلقة</div>`;
+    return;
+  }
+
+  box.innerHTML = "";
+
+  pendingOrders.forEach(order => {
+    const card = document.createElement("div");
+    card.className = "pending-card";
+
+    // حساب عمر الطلب
+    const ageMinutes = (Date.now() - new Date(order.created_at).getTime()) / 60000;
+
+    if (order.status === "paid") {
+      card.classList.add("paid");
+    } else if (ageMinutes > 60) {
+      card.classList.add("old");
+    } else if (ageMinutes > 15) {
+      card.classList.add("medium");
+    } else {
+      card.classList.add("fresh");
+    }
+
+    // رأس
+    const header = document.createElement("div");
+    header.className = "pending-header";
+    header.innerHTML = `
+      <div class="pending-num">#${order.order_number}</div>
+      <div class="pending-time">${formatAge(ageMinutes)}</div>
     `;
+    card.appendChild(header);
 
-    const cashBtn = document.createElement("button");
-    cashBtn.className = "btn success";
-    cashBtn.textContent = "💵 كاش";
-    cashBtn.style.marginBottom = "10px";
-    cashBtn.onclick = () => { overlay.remove(); resolve("cash"); };
+    // حالة
+    const statusEl = document.createElement("div");
+    statusEl.className = `pending-status ${order.status === 'paid' ? 'paid' : 'unpaid'}`;
+    statusEl.textContent = order.status === "paid" ? "✅ مدفوع" : "⏳ في انتظار الدفع";
+    card.appendChild(statusEl);
 
-    const cardBtn = document.createElement("button");
-    cardBtn.className = "btn primary";
-    cardBtn.textContent = "💳 بطاقة";
-    cardBtn.style.marginBottom = "10px";
-    cardBtn.onclick = () => { overlay.remove(); resolve("card"); };
+    // العناصر
+    const itemsBox = document.createElement("div");
+    itemsBox.className = "pending-items";
+    (order.order_items || []).forEach(it => {
+      const line = document.createElement("div");
+      line.className = "pending-item-line";
+      line.innerHTML = `
+        <span>${escapeHtml(it.name)} × ${it.qty}</span>
+        <span style="color:var(--gold-dark);font-weight:600">${Number(it.subtotal).toFixed(3)}</span>
+      `;
+      itemsBox.appendChild(line);
+    });
+    card.appendChild(itemsBox);
+
+    // الإجمالي
+    const totalEl = document.createElement("div");
+    totalEl.className = "pending-total";
+    totalEl.innerHTML = `
+      <span class="pending-total-label">الإجمالي</span>
+      <span class="pending-total-value">${Number(order.total).toFixed(3)} ${state.currency}</span>
+    `;
+    card.appendChild(totalEl);
+
+    // أزرار
+    const actions = document.createElement("div");
+    actions.className = "pending-actions";
+
+    if (order.status === "open") {
+      const payBtn = document.createElement("button");
+      payBtn.className = "btn success";
+      payBtn.textContent = "💰 دفع";
+      payBtn.onclick = () => openPaymentPopup(order);
+      actions.appendChild(payBtn);
+    }
+
+    const deliverBtn = document.createElement("button");
+    deliverBtn.className = "btn delivery";
+    deliverBtn.textContent = "✅ تسليم";
+    deliverBtn.onclick = () => deliverOrder(order);
+    actions.appendChild(deliverBtn);
 
     const cancelBtn = document.createElement("button");
     cancelBtn.className = "btn secondary";
-    cancelBtn.textContent = "إلغاء";
-    cancelBtn.onclick = () => { overlay.remove(); resolve(null); };
+    cancelBtn.style.flex = "0 0 auto";
+    cancelBtn.style.padding = "9px 12px";
+    cancelBtn.textContent = "🗑";
+    cancelBtn.title = "إلغاء الطلب";
+    cancelBtn.onclick = () => cancelOrder(order);
+    actions.appendChild(cancelBtn);
 
-    box.appendChild(cashBtn);
-    box.appendChild(cardBtn);
-    box.appendChild(cancelBtn);
+    card.appendChild(actions);
 
-    overlay.appendChild(box);
-    overlay.onclick = (e) => {
-      if (e.target === overlay) { overlay.remove(); resolve(null); }
-    };
-    document.body.appendChild(overlay);
+    box.appendChild(card);
   });
+}
+
+function formatAge(minutes) {
+  if (minutes < 1) return "الآن";
+  if (minutes < 60) return `${Math.floor(minutes)} د`;
+  const h = Math.floor(minutes / 60);
+  const m = Math.floor(minutes % 60);
+  return `${h}س ${m}د`;
+}
+
+/* ========== بوب أب الدفع (مع دعم الدفع المشترك) ========== */
+function openPaymentPopup(order) {
+  const overlay = document.createElement("div");
+  overlay.className = "popup-overlay";
+
+  const box = document.createElement("div");
+  box.className = "popup-box";
+  box.style.maxWidth = "440px";
+
+  const total = Number(order.total);
+
+  box.innerHTML = `
+    <h3>💰 دفع الطلب #${order.order_number}</h3>
+
+    <div class="popup-total">
+      <div class="popup-total-label">المبلغ المطلوب</div>
+      <div class="popup-total-value">${total.toFixed(3)} ${state.currency}</div>
+    </div>
+
+    <div style="display:flex;gap:8px;margin-bottom:14px">
+      <button class="btn primary" id="payCashOnly" style="flex:1">💵 كاش بالكامل</button>
+      <button class="btn primary" id="payCardOnly" style="flex:1">💳 بطاقة بالكامل</button>
+    </div>
+
+    <div style="text-align:center;color:var(--text-muted);font-size:12px;margin-bottom:10px">
+      ━━━━ أو الدفع المشترك ━━━━
+    </div>
+
+    <div class="split-payment">
+      <div class="split-row">
+        <label>💵 كاش</label>
+        <input type="number" step="0.001" min="0" id="cashAmount" value="0" />
+      </div>
+      <div class="split-row">
+        <label>💳 بطاقة</label>
+        <input type="number" step="0.001" min="0" id="cardAmount" value="0" />
+      </div>
+
+      <div class="split-summary">
+        <div class="split-summary-row">
+          <span>المدخل</span>
+          <span id="splitPaid" style="font-weight:700;color:var(--gold-dark)">0.000</span>
+        </div>
+        <div class="split-summary-row required">
+          <span>المطلوب</span>
+          <span>${total.toFixed(3)} ${state.currency}</span>
+        </div>
+        <div id="splitStatus"></div>
+      </div>
+    </div>
+
+    <div class="popup-actions">
+      <button class="btn success" id="confirmPay">✅ تأكيد الدفع</button>
+      <button class="btn secondary" id="cancelPay">إلغاء</button>
+    </div>
+  `;
+
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+
+  const cashInput = box.querySelector("#cashAmount");
+  const cardInput = box.querySelector("#cardAmount");
+  const paidEl = box.querySelector("#splitPaid");
+  const statusEl = box.querySelector("#splitStatus");
+
+  function updateSplit() {
+    const cash = Number(cashInput.value) || 0;
+    const card = Number(cardInput.value) || 0;
+    const paid = cash + card;
+    paidEl.textContent = paid.toFixed(3);
+
+    statusEl.innerHTML = "";
+    if (paid > 0) {
+      if (Math.abs(paid - total) < 0.001) {
+        statusEl.innerHTML = `<div class="split-success">✅ المبلغ مطابق</div>`;
+      } else if (paid < total) {
+        statusEl.innerHTML = `<div class="split-error">⚠️ ناقص ${(total - paid).toFixed(3)} ${state.currency}</div>`;
+      } else {
+        statusEl.innerHTML = `<div class="split-error">⚠️ زائد ${(paid - total).toFixed(3)} ${state.currency}</div>`;
+      }
+    }
+  }
+
+  cashInput.oninput = updateSplit;
+  cardInput.oninput = updateSplit;
+
+  box.querySelector("#payCashOnly").onclick = () => {
+    confirmPayment(order, total, 0, "cash", overlay);
+  };
+
+  box.querySelector("#payCardOnly").onclick = () => {
+    confirmPayment(order, 0, total, "card", overlay);
+  };
+
+  box.querySelector("#confirmPay").onclick = () => {
+    const cash = Number(cashInput.value) || 0;
+    const card = Number(cardInput.value) || 0;
+    const paid = cash + card;
+
+    if (paid <= 0) {
+      showAlert("أدخل مبلغ الدفع");
+      return;
+    }
+
+    if (Math.abs(paid - total) >= 0.001) {
+      showAlert(`المبلغ المدخل (${paid.toFixed(3)}) لا يطابق المطلوب (${total.toFixed(3)})`);
+      return;
+    }
+
+    let method = "split";
+    if (cash > 0 && card === 0) method = "cash";
+    else if (card > 0 && cash === 0) method = "card";
+
+    confirmPayment(order, cash, card, method, overlay);
+  };
+
+  box.querySelector("#cancelPay").onclick = () => overlay.remove();
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+}
+async function confirmPayment(order, cash, card, method, overlay) {
+  const { error } = await supabase
+    .from("orders")
+    .update({
+      status: "paid",
+      payment_method: method,
+      cash_amount: cash,
+      card_amount: card,
+      paid_at: new Date().toISOString()
+    })
+    .eq("id", order.id);
+
+  if (error) {
+    showAlert("❌ " + error.message);
+    return;
+  }
+
+  overlay.remove();
+  showToast(`✅ تم دفع الطلب #${order.order_number}`);
+  loadPendingOrders();
+}
+
+/* ========== تسليم الطلب ========== */
+async function deliverOrder(order) {
+  if (!confirm(`تسليم الطلب #${order.order_number}؟`)) return;
+
+  const { error } = await supabase
+    .from("orders")
+    .update({
+      status: "delivered",
+      delivered_at: new Date().toISOString()
+    })
+    .eq("id", order.id);
+
+  if (error) {
+    showAlert("❌ " + error.message);
+    return;
+  }
+
+  showToast(`✅ تم تسليم الطلب #${order.order_number}`);
+  loadPendingOrders();
+}
+
+/* ========== إلغاء الطلب ========== */
+async function cancelOrder(order) {
+  if (!confirm(`إلغاء وحذف الطلب #${order.order_number}؟`)) return;
+
+  const { error } = await supabase
+    .from("orders")
+    .delete()
+    .eq("id", order.id);
+
+  if (error) {
+    showAlert("❌ " + error.message);
+    return;
+  }
+
+  showToast(`🗑 تم حذف الطلب #${order.order_number}`);
+  loadPendingOrders();
+}
+
+/* ========== Toast (إشعار سريع) ========== */
+function showToast(message) {
+  const toast = document.createElement("div");
+  toast.style.cssText = `
+    position:fixed;
+    top:80px;
+    left:50%;
+    transform:translateX(-50%);
+    background:linear-gradient(135deg,#059669,#047857);
+    color:#fff;
+    padding:14px 24px;
+    border-radius:12px;
+    box-shadow:0 8px 24px rgba(5,150,105,0.3);
+    z-index:10000;
+    font-weight:600;
+    animation:fadeIn 0.3s ease-out;
+  `;
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  setTimeout(() => {
+    toast.style.opacity = "0";
+    toast.style.transition = "opacity 0.3s";
+    setTimeout(() => toast.remove(), 300);
+  }, 2500);
 }
 
 /* ========== رسائل التنبيه ========== */
@@ -580,7 +847,13 @@ function escapeHtml(str) {
 window.addEventListener("DOMContentLoaded", async () => {
   await loadSettings();
   await loadCategories();
+  await loadPendingOrders();
   renderCart();
+
+  // تحديث أعمار الطلبات كل 30 ثانية
+  pendingTimer = setInterval(() => {
+    if (pendingOrders.length > 0) renderPendingOrders();
+  }, 30000);
 });
 
 /* ========== Realtime ========== */
@@ -594,5 +867,8 @@ supabase
   })
   .on("postgres_changes", { event: "UPDATE", schema: "public", table: "settings" }, () => {
     loadSettings().then(renderCart);
+  })
+  .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, () => {
+    loadPendingOrders();
   })
   .subscribe();
