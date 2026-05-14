@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <title>العمدة - الكاشير</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="theme-color" content="#0a0a0f">
+  <meta name="theme-color" content="#faf6f0">
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -27,7 +27,7 @@
 
   <!-- الفاتورة -->
   <section class="card">
-    <h2>الفاتورة</h2>
+    <h2>الفاتورة الحالية</h2>
 
     <div id="cart" class="cart-list">
       <div class="empty-cart">السلة فاضية</div>
@@ -48,9 +48,17 @@
       </div>
     </div>
 
-    <button onclick="completeOrder()" class="btn success" id="completeBtn">
-      ✨ إتمام الطلب
+    <button onclick="saveOrder()" class="btn success" id="completeBtn">
+      ✨ حفظ الطلب
     </button>
+  </section>
+
+  <!-- الطلبات المعلقة -->
+  <section class="card pending-panel">
+    <h2>الطلبات المعلقة <span id="pendingCount" style="color:var(--gold);font-size:14px;background:rgba(184,134,11,0.1);padding:3px 10px;border-radius:6px;font-family:var(--font-display)">0</span></h2>
+    <div id="pendingOrders" class="pending-orders">
+      <div class="pending-empty">لا توجد طلبات معلقة</div>
+    </div>
   </section>
 
 </main>
