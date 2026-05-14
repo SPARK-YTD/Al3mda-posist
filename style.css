@@ -742,15 +742,31 @@ select {
 }
 
 .pending-actions {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
   gap: 6px;
 }
 
 .pending-actions button {
-  flex: 1;
-  padding: 9px 8px;
+  padding: 10px 8px;
   font-size: 13px;
+  white-space: nowrap;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
+
+.pending-actions button:last-child {
+  min-width: 44px;
+  padding: 10px;
+}
+
+/* لو الطلب مدفوع - عمودين بس */
+.pending-card.paid .pending-actions {
+  grid-template-columns: 1fr auto;
+}
+
 .popup-overlay {
   position: fixed;
   inset: 0;
