@@ -1500,3 +1500,169 @@ select {
   .data-table { font-size: 13px; }
   .data-table th, .data-table td { padding: 10px 8px; }
 }
+/* ===================================================
+   بوب أب عرض تفاصيل الطلب
+=================================================== */
+
+.order-details-box {
+  max-width: 520px;
+}
+
+.order-details-header {
+  background: linear-gradient(135deg, rgba(184, 134, 11, 0.12), rgba(184, 134, 11, 0.04));
+  border: 1px solid var(--border-gold);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+  text-align: center;
+}
+
+.order-details-num {
+  font-family: var(--font-display);
+  font-size: 32px;
+  font-weight: 700;
+  color: var(--gold-dark);
+  margin-bottom: 4px;
+}
+
+.order-details-date {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.order-details-status {
+  display: inline-block;
+  margin-top: 8px;
+  font-size: 12px;
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-weight: 700;
+}
+
+.order-details-status.unpaid {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.order-details-status.paid {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.order-details-items {
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  margin-bottom: 14px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.order-detail-item {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 8px;
+}
+
+.order-detail-item:last-child { margin-bottom: 0; }
+
+.order-detail-item-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.order-detail-item-name {
+  font-weight: 700;
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.order-detail-item-qty {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-right: 6px;
+}
+
+.order-detail-item-price {
+  font-family: var(--font-display);
+  font-weight: 700;
+  color: var(--gold-dark);
+  font-size: 15px;
+  white-space: nowrap;
+}
+
+.order-detail-mods {
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: var(--bg-deep);
+  border-right: 2px solid var(--border-gold);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.8;
+}
+
+.order-detail-mod-line {
+  display: flex;
+  justify-content: space-between;
+}
+
+.order-detail-mod-line span:last-child {
+  color: var(--gold-dark);
+  font-weight: 600;
+}
+
+.order-details-totals {
+  background: rgba(184, 134, 11, 0.05);
+  border: 1px solid var(--border-gold);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+
+.order-details-payment {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.order-details-payment strong {
+  color: var(--gold-dark);
+  font-family: var(--font-display);
+  font-size: 15px;
+}
+
+.payment-split-info {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+  display: flex;
+  justify-content: space-around;
+  font-size: 12px;
+}
+
+.payment-split-info > div {
+  text-align: center;
+}
+
+.payment-split-info .label {
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+
+.payment-split-info .value {
+  font-family: var(--font-display);
+  font-weight: 700;
+  color: var(--gold-dark);
+}
