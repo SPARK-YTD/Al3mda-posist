@@ -415,7 +415,6 @@ async function openModifiersPopup(item, productGroups) {
     if (totalEl) totalEl.textContent = `${total.toFixed(3)} ${state.currency}`;
   }
 }
-
 /* ========== حفظ الطلب (بدون دفع) ========== */
 window.saveOrder = async function () {
   if (cart.length === 0) {
@@ -464,7 +463,8 @@ window.saveOrder = async function () {
 
     if (itemsError) throw itemsError;
 
-    showToast(`✅ تم حفظ الطلب #${order.order_number}`);
+    const displayNum = order.daily_number || order.order_number;
+    showToast(`✅ تم حفظ الطلب #${displayNum}`);
     clearCart();
     loadPendingOrders();
 
@@ -477,12 +477,19 @@ window.saveOrder = async function () {
   }
 };
 
-/* ========== تحميل الطلبات المعلقة ========== */
+/* ========== تحميل الطلبات المعلقة (اليوم فقط) ========== */
 async function loadPendingOrders() {
+  // التاريخ الحالي بتوقيت البحرين
+  const todayBahrain = new Date(
+    new Date().toLocaleString("en-US", { timeZone: "Asia/Bahrain" })
+  );
+  const todayStr = todayBahrain.toISOString().split("T")[0];
+
   const { data, error } = await supabase
     .from("orders")
     .select("*, order_items(*)")
     .in("status", ["open", "paid"])
+    .eq("order_date", todayStr)
     .order("created_at", { ascending: true });
 
   if (error) {
@@ -513,7 +520,6 @@ function renderPendingOrders() {
     const card = document.createElement("div");
     card.className = "pending-card";
 
-    // حساب عمر الطلب
     const ageMinutes = (Date.now() - new Date(order.created_at).getTime()) / 60000;
 
     if (order.status === "paid") {
@@ -526,11 +532,13 @@ function renderPendingOrders() {
       card.classList.add("fresh");
     }
 
+    const orderNum = order.daily_number || order.order_number;
+
     // رأس
     const header = document.createElement("div");
     header.className = "pending-header";
     header.innerHTML = `
-      <div class="pending-num">#${order.order_number}</div>
+      <div class="pending-num">#${orderNum}</div>
       <div class="pending-time">${formatAge(ageMinutes)}</div>
     `;
     card.appendChild(header);
@@ -541,7 +549,7 @@ function renderPendingOrders() {
     statusEl.textContent = order.status === "paid" ? "✅ مدفوع" : "⏳ في انتظار الدفع";
     card.appendChild(statusEl);
 
-    // العناصر
+    // العناصر (مختصرة)
     const itemsBox = document.createElement("div");
     itemsBox.className = "pending-items";
     (order.order_items || []).forEach(it => {
@@ -567,6 +575,13 @@ function renderPendingOrders() {
     // أزرار
     const actions = document.createElement("div");
     actions.className = "pending-actions";
+
+    // 👁 زر عرض التفاصيل (دائماً موجود)
+    const viewBtn = document.createElement("button");
+    viewBtn.className = "btn primary";
+    viewBtn.textContent = "👁 عرض";
+    viewBtn.onclick = () => showOrderDetails(order);
+    actions.appendChild(viewBtn);
 
     if (order.status === "open") {
       const payBtn = document.createElement("button");
@@ -605,6 +620,145 @@ function formatAge(minutes) {
   return `${h}س ${m}د`;
 }
 
+/* ========== 👁 عرض تفاصيل الطلب ========== */
+function showOrderDetails(order) {
+  const overlay = document.createElement("div");
+  overlay.className = "popup-overlay";
+
+  const box = document.createElement("div");
+  box.className = "popup-box order-details-box";
+
+  const orderNum = order.daily_number || order.order_number;
+  const date = new Date(order.created_at);
+  const dateStr = date.toLocaleString("ar-BH", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+
+  const isPaid = order.status === "paid";
+
+  // بناء قائمة العناصر مع الإضافات
+  const itemsHtml = (order.order_items || []).map(it => {
+    const mods = it.modifiers_json || [];
+    let modsHtml = "";
+
+    if (Array.isArray(mods) && mods.length > 0) {
+      const modLines = mods.map(m => {
+        const qtyStr = m.qty > 1 ? ` ×${m.qty}` : "";
+        const priceStr = m.price > 0 ? `+${(m.price * m.qty).toFixed(3)}` : "مجاني";
+        return `
+          <div class="order-detail-mod-line">
+            <span>+ ${escapeHtml(m.name)}${qtyStr}</span>
+            <span>${priceStr}</span>
+          </div>
+        `;
+      }).join("");
+
+      modsHtml = `<div class="order-detail-mods">${modLines}</div>`;
+    }
+
+    return `
+      <div class="order-detail-item">
+        <div class="order-detail-item-top">
+          <div>
+            <span class="order-detail-item-name">${escapeHtml(it.name)}</span>
+            <span class="order-detail-item-qty">× ${it.qty}</span>
+          </div>
+          <div class="order-detail-item-price">${Number(it.subtotal).toFixed(3)}</div>
+        </div>
+        ${modsHtml}
+      </div>
+    `;
+  }).join("");
+
+  // معلومات الدفع
+  let paymentHtml = "";
+  if (isPaid) {
+    const cash = Number(order.cash_amount || 0);
+    const card = Number(order.card_amount || 0);
+
+    let methodLabel = "—";
+    if (order.payment_method === "cash") methodLabel = "💵 كاش";
+    else if (order.payment_method === "card") methodLabel = "💳 بطاقة";
+    else if (order.payment_method === "split") methodLabel = "💵💳 مشترك";
+
+    paymentHtml = `
+      <div class="order-details-payment">
+        <span>طريقة الدفع</span>
+        <strong>${methodLabel}</strong>
+      </div>
+    `;
+
+    if (order.payment_method === "split") {
+      paymentHtml += `
+        <div class="order-details-payment payment-split-info">
+          <div>
+            <div class="label">💵 كاش</div>
+            <div class="value">${cash.toFixed(3)}</div>
+          </div>
+          <div>
+            <div class="label">💳 بطاقة</div>
+            <div class="value">${card.toFixed(3)}</div>
+          </div>
+        </div>
+      `;
+    }
+  } else {
+    paymentHtml = `
+      <div class="order-details-payment" style="background:#fef3c7;color:#92400e;border-color:#fde68a">
+        <span>⏳ في انتظار الدفع</span>
+        <strong>لم يدفع بعد</strong>
+      </div>
+    `;
+  }
+
+  box.innerHTML = `
+    <h3>📄 تفاصيل الطلب</h3>
+
+    <div class="order-details-header">
+      <div class="order-details-num">#${orderNum}</div>
+      <div class="order-details-date">${dateStr}</div>
+      <div class="order-details-status ${isPaid ? 'paid' : 'unpaid'}">
+        ${isPaid ? '✅ مدفوع' : '⏳ في انتظار الدفع'}
+      </div>
+    </div>
+
+    <div class="order-details-items">
+      ${itemsHtml}
+    </div>
+
+    <div class="order-details-totals">
+      <div class="totals-row">
+        <span>المجموع الفرعي</span>
+        <span>${Number(order.subtotal).toFixed(3)} ${state.currency}</span>
+      </div>
+      <div class="totals-row">
+        <span>الضريبة</span>
+        <span>${Number(order.tax).toFixed(3)} ${state.currency}</span>
+      </div>
+      <div class="totals-row grand">
+        <span>الإجمالي</span>
+        <span>${Number(order.total).toFixed(3)} ${state.currency}</span>
+      </div>
+    </div>
+
+    ${paymentHtml}
+
+    <div class="popup-actions" style="margin-top:16px">
+      <button class="btn primary" id="closeDetails">إغلاق</button>
+    </div>
+  `;
+
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+
+  box.querySelector("#closeDetails").onclick = () => overlay.remove();
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+}
+
 /* ========== بوب أب الدفع (مع دعم الدفع المشترك) ========== */
 function openPaymentPopup(order) {
   const overlay = document.createElement("div");
@@ -615,9 +769,10 @@ function openPaymentPopup(order) {
   box.style.maxWidth = "440px";
 
   const total = Number(order.total);
+  const orderNum = order.daily_number || order.order_number;
 
   box.innerHTML = `
-    <h3>💰 دفع الطلب #${order.order_number}</h3>
+    <h3>💰 دفع الطلب #${orderNum}</h3>
 
     <div class="popup-total">
       <div class="popup-total-label">المبلغ المطلوب</div>
@@ -742,13 +897,15 @@ async function confirmPayment(order, cash, card, method, overlay) {
   }
 
   overlay.remove();
-  showToast(`✅ تم دفع الطلب #${order.order_number}`);
+  const orderNum = order.daily_number || order.order_number;
+  showToast(`✅ تم دفع الطلب #${orderNum}`);
   loadPendingOrders();
 }
 
 /* ========== تسليم الطلب ========== */
 async function deliverOrder(order) {
-  if (!confirm(`تسليم الطلب #${order.order_number}؟`)) return;
+  const orderNum = order.daily_number || order.order_number;
+  if (!confirm(`تسليم الطلب #${orderNum}؟`)) return;
 
   const { error } = await supabase
     .from("orders")
@@ -763,13 +920,14 @@ async function deliverOrder(order) {
     return;
   }
 
-  showToast(`✅ تم تسليم الطلب #${order.order_number}`);
+  showToast(`✅ تم تسليم الطلب #${orderNum}`);
   loadPendingOrders();
 }
 
 /* ========== إلغاء الطلب ========== */
 async function cancelOrder(order) {
-  if (!confirm(`إلغاء وحذف الطلب #${order.order_number}؟`)) return;
+  const orderNum = order.daily_number || order.order_number;
+  if (!confirm(`إلغاء وحذف الطلب #${orderNum}؟`)) return;
 
   const { error } = await supabase
     .from("orders")
@@ -781,7 +939,7 @@ async function cancelOrder(order) {
     return;
   }
 
-  showToast(`🗑 تم حذف الطلب #${order.order_number}`);
+  showToast(`🗑 تم حذف الطلب #${orderNum}`);
   loadPendingOrders();
 }
 
@@ -843,6 +1001,25 @@ function escapeHtml(str) {
   return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
+/* ========== فحص تغيّر اليوم (للتصفير التلقائي) ========== */
+let currentDayBahrain = getCurrentBahrainDate();
+
+function getCurrentBahrainDate() {
+  const now = new Date();
+  return new Date(now.toLocaleString("en-US", { timeZone: "Asia/Bahrain" }))
+    .toISOString().split("T")[0];
+}
+
+function checkDayChange() {
+  const newDay = getCurrentBahrainDate();
+  if (newDay !== currentDayBahrain) {
+    console.log("🌙 يوم جديد:", newDay);
+    currentDayBahrain = newDay;
+    loadPendingOrders();
+    showToast("🌙 يوم جديد - تم تصفير الأرقام");
+  }
+}
+
 /* ========== بدء التشغيل ========== */
 window.addEventListener("DOMContentLoaded", async () => {
   await loadSettings();
@@ -850,8 +1027,9 @@ window.addEventListener("DOMContentLoaded", async () => {
   await loadPendingOrders();
   renderCart();
 
-  // تحديث أعمار الطلبات كل 30 ثانية
+  // تحديث أعمار الطلبات + فحص تغيّر اليوم كل 30 ثانية
   pendingTimer = setInterval(() => {
+    checkDayChange();
     if (pendingOrders.length > 0) renderPendingOrders();
   }, 30000);
 });
