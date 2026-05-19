@@ -25,6 +25,16 @@ export async function renderSales(container) {
           <option value="">الكل</option>
           <option value="cash">💵 كاش</option>
           <option value="card">💳 بطاقة</option>
+          <option value="split">💵💳 مشترك</option>
+        </select>
+      </div>
+      <div>
+        <label>الحالة</label>
+        <select id="statusFilter">
+          <option value="paid_or_delivered">مدفوع + مسلّم</option>
+          <option value="delivered">✅ مسلّم فقط</option>
+          <option value="paid">💰 مدفوع (غير مسلّم)</option>
+          <option value="all">الكل (يشمل المعلقة)</option>
         </select>
       </div>
       <button class="btn success" id="applyFilters">🔍 عرض</button>
@@ -41,12 +51,13 @@ export async function renderSales(container) {
     <table class="data-table">
       <thead>
         <tr>
-          <th>رقم الطلب</th>
+          <th>رقم</th>
           <th>التاريخ</th>
           <th>الفرعي</th>
           <th>الضريبة</th>
           <th>الإجمالي</th>
           <th>الدفع</th>
+          <th>الحالة</th>
           <th>التفاصيل</th>
         </tr>
       </thead>
@@ -89,6 +100,7 @@ async function loadSales() {
   const from = document.getElementById("dateFrom").value;
   const to = document.getElementById("dateTo").value;
   const payment = document.getElementById("paymentFilter").value;
+  const statusVal = document.getElementById("statusFilter").value;
 
   if (!from || !to) {
     alert("اختر التاريخين");
@@ -105,6 +117,17 @@ async function loadSales() {
     .lte("created_at", toIso)
     .order("created_at", { ascending: false });
 
+  // فلتر الحالة
+  if (statusVal === "delivered") {
+    query = query.eq("status", "delivered");
+  } else if (statusVal === "paid") {
+    query = query.eq("status", "paid");
+  } else if (statusVal === "paid_or_delivered") {
+    query = query.in("status", ["paid", "delivered"]);
+  }
+  // "all" = بدون فلتر
+
+  // فلتر الدفع
   if (payment) {
     query = query.eq("payment_method", payment);
   }
@@ -126,12 +149,20 @@ function renderStats() {
   const stats = document.getElementById("statsGrid");
 
   const totalSales = currentOrders.reduce((s, o) => s + Number(o.total), 0);
-  const totalCash = currentOrders.filter(o => o.payment_method === "cash")
-    .reduce((s, o) => s + Number(o.total), 0);
-  const totalCard = currentOrders.filter(o => o.payment_method === "card")
-    .reduce((s, o) => s + Number(o.total), 0);
+
+  // الحساب الصحيح للكاش والبطاقة (يحسب الدفع المشترك بشكل صحيح)
+  // كاش = مجموع cash_amount لكل الطلبات (كاش كامل + جزء الكاش من المشترك)
+  // بطاقة = مجموع card_amount لكل الطلبات (بطاقة كامل + جزء البطاقة من المشترك)
+  const totalCash = currentOrders.reduce((s, o) => s + Number(o.cash_amount || 0), 0);
+  const totalCard = currentOrders.reduce((s, o) => s + Number(o.card_amount || 0), 0);
+
   const totalTax = currentOrders.reduce((s, o) => s + Number(o.tax), 0);
   const avg = currentOrders.length > 0 ? totalSales / currentOrders.length : 0;
+
+  // إحصاء الحالات
+  const paidCount = currentOrders.filter(o => o.status === "paid").length;
+  const deliveredCount = currentOrders.filter(o => o.status === "delivered").length;
+  const openCount = currentOrders.filter(o => o.status === "open").length;
 
   stats.innerHTML = `
     <div class="stat-card">
@@ -158,14 +189,69 @@ function renderStats() {
       <div class="stat-label">إجمالي الضريبة</div>
       <div class="stat-value">${totalTax.toFixed(3)}</div>
     </div>
+    <div class="stat-card">
+      <div class="stat-label">✅ مسلّم</div>
+      <div class="stat-value" style="color:var(--success)">${deliveredCount}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">💰 مدفوع (لم يسلّم)</div>
+      <div class="stat-value" style="color:var(--warning)">${paidCount}</div>
+    </div>
+    ${openCount > 0 ? `
+      <div class="stat-card">
+        <div class="stat-label">⏳ معلّق</div>
+        <div class="stat-value" style="color:var(--danger)">${openCount}</div>
+      </div>
+    ` : ''}
   `;
+}
+
+/* تنسيق طريقة الدفع (HTML للعرض في الجدول) */
+function formatPaymentMethod(order) {
+  if (!order.payment_method) return "—";
+  if (order.payment_method === "cash") return "💵 كاش";
+  if (order.payment_method === "card") return "💳 بطاقة";
+  if (order.payment_method === "split") {
+    const cash = Number(order.cash_amount || 0).toFixed(3);
+    const card = Number(order.card_amount || 0).toFixed(3);
+    return `💵💳 مشترك<br><span style="font-size:11px;color:var(--text-muted);font-weight:normal">كاش: ${cash} · بطاقة: ${card}</span>`;
+  }
+  return escapeHtml(order.payment_method);
+}
+
+/* تنسيق طريقة الدفع (نص عادي للـ CSV) */
+function formatPaymentMethodPlain(order) {
+  if (!order.payment_method) return "—";
+  if (order.payment_method === "cash") return "كاش";
+  if (order.payment_method === "card") return "بطاقة";
+  if (order.payment_method === "split") {
+    const cash = Number(order.cash_amount || 0).toFixed(3);
+    const card = Number(order.card_amount || 0).toFixed(3);
+    return `مشترك (كاش: ${cash} - بطاقة: ${card})`;
+  }
+  return order.payment_method;
+}
+
+/* تنسيق حالة الطلب */
+function formatStatus(status) {
+  if (status === "delivered") return `<span style="color:var(--success);font-weight:700">✅ مسلّم</span>`;
+  if (status === "paid") return `<span style="color:var(--warning);font-weight:700">💰 مدفوع</span>`;
+  if (status === "open") return `<span style="color:var(--danger);font-weight:700">⏳ معلّق</span>`;
+  return status;
+}
+
+function formatStatusPlain(status) {
+  if (status === "delivered") return "مسلّم";
+  if (status === "paid") return "مدفوع";
+  if (status === "open") return "معلّق";
+  return status;
 }
 
 function renderOrdersTable() {
   const tbody = document.getElementById("ordersTable");
 
   if (currentOrders.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text-muted)">📊<br><br>ما فيه طلبات في الفترة المحددة</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--text-muted)">📊<br><br>ما فيه طلبات في الفترة المحددة</td></tr>`;
     return;
   }
 
@@ -180,13 +266,17 @@ function renderOrdersTable() {
       hour: "2-digit", minute: "2-digit"
     });
 
+    // استخدم الترقيم اليومي إذا متوفر
+    const orderNum = o.daily_number || o.order_number;
+
     tr.innerHTML = `
-      <td><strong style="color:var(--gold)">#${o.order_number}</strong></td>
+      <td><strong style="color:var(--gold)">#${orderNum}</strong></td>
       <td style="font-size:13px;color:var(--text-secondary)">${dateStr}</td>
       <td>${Number(o.subtotal).toFixed(3)}</td>
       <td>${Number(o.tax).toFixed(3)}</td>
       <td><strong style="color:var(--gold-light);font-family:var(--font-display)">${Number(o.total).toFixed(3)}</strong></td>
-      <td>${o.payment_method === "cash" ? "💵 كاش" : "💳 بطاقة"}</td>
+      <td>${formatPaymentMethod(o)}</td>
+      <td>${formatStatus(o.status)}</td>
     `;
 
     const viewTd = document.createElement("td");
@@ -217,6 +307,7 @@ async function showOrderDetails(order) {
   box.className = "popup-box";
   box.style.maxWidth = "560px";
 
+  const orderNum = order.daily_number || order.order_number;
   const date = new Date(order.created_at).toLocaleString("ar-BH");
 
   // بناء قائمة العناصر مع الإضافات
@@ -237,7 +328,7 @@ async function showOrderDetails(order) {
     }
 
     return `
-      <div style="background:rgba(28,28,40,0.5);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:8px">
+      <div style="background:var(--bg-card-solid);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:8px">
         <div style="display:flex;justify-content:space-between;align-items:center">
           <div>
             <strong>${escapeHtml(it.name)}</strong>
@@ -250,8 +341,45 @@ async function showOrderDetails(order) {
     `;
   }).join("");
 
+  // معلومات الدفع
+  const cash = Number(order.cash_amount || 0);
+  const card = Number(order.card_amount || 0);
+
+  let methodLabel = "—";
+  if (order.payment_method === "cash") methodLabel = "💵 كاش";
+  else if (order.payment_method === "card") methodLabel = "💳 بطاقة";
+  else if (order.payment_method === "split") methodLabel = "💵💳 مشترك";
+
+  let paymentHtml = `
+    <div style="text-align:center;color:var(--text-secondary);font-size:13px;margin:12px 0">
+      طريقة الدفع: <strong style="color:var(--gold-light)">${methodLabel}</strong>
+    </div>
+  `;
+
+  if (order.payment_method === "split") {
+    paymentHtml += `
+      <div style="display:flex;gap:10px;margin:12px 0">
+        <div style="flex:1;text-align:center;background:var(--bg-hover);padding:10px;border-radius:8px;border:1px solid var(--border)">
+          <div style="font-size:12px;color:var(--text-muted)">💵 كاش</div>
+          <div style="font-family:var(--font-display);font-weight:700;color:var(--gold)">${cash.toFixed(3)}</div>
+        </div>
+        <div style="flex:1;text-align:center;background:var(--bg-hover);padding:10px;border-radius:8px;border:1px solid var(--border)">
+          <div style="font-size:12px;color:var(--text-muted)">💳 بطاقة</div>
+          <div style="font-family:var(--font-display);font-weight:700;color:var(--gold)">${card.toFixed(3)}</div>
+        </div>
+      </div>
+    `;
+  }
+
+  // حالة الطلب
+  const statusHtml = `
+    <div style="text-align:center;color:var(--text-secondary);font-size:13px;margin:8px 0">
+      الحالة: ${formatStatus(order.status)}
+    </div>
+  `;
+
   box.innerHTML = `
-    <h3>📄 تفاصيل الطلب #${order.order_number}</h3>
+    <h3>📄 تفاصيل الطلب #${orderNum}</h3>
     <div style="font-size:13px;color:var(--text-secondary);margin-bottom:16px;text-align:center">${date}</div>
 
     <div style="max-height:50vh;overflow-y:auto;margin-bottom:14px">
@@ -264,9 +392,8 @@ async function showOrderDetails(order) {
       <div class="totals-row grand"><span>الإجمالي</span><span>${Number(order.total).toFixed(3)}</span></div>
     </div>
 
-    <div style="text-align:center;color:var(--text-secondary);font-size:13px;margin:12px 0">
-      طريقة الدفع: <strong style="color:var(--gold-light)">${order.payment_method === "cash" ? "💵 كاش" : "💳 بطاقة"}</strong>
-    </div>
+    ${paymentHtml}
+    ${statusHtml}
 
     <div class="popup-actions">
       <button class="btn primary" id="closeDetails">إغلاق</button>
@@ -286,14 +413,28 @@ function exportCsv() {
     return;
   }
 
-  const headers = ["رقم الطلب", "التاريخ", "الفرعي", "الضريبة", "الإجمالي", "طريقة الدفع"];
+  const headers = [
+    "رقم الطلب",
+    "التاريخ",
+    "الفرعي",
+    "الضريبة",
+    "الإجمالي",
+    "طريقة الدفع",
+    "مبلغ الكاش",
+    "مبلغ البطاقة",
+    "الحالة"
+  ];
+
   const rows = currentOrders.map(o => [
-    o.order_number,
+    o.daily_number || o.order_number,
     new Date(o.created_at).toLocaleString("ar-BH"),
     Number(o.subtotal).toFixed(3),
     Number(o.tax).toFixed(3),
     Number(o.total).toFixed(3),
-    o.payment_method === "cash" ? "كاش" : "بطاقة"
+    formatPaymentMethodPlain(o),
+    Number(o.cash_amount || 0).toFixed(3),
+    Number(o.card_amount || 0).toFixed(3),
+    formatStatusPlain(o.status)
   ]);
 
   const csv = [headers, ...rows]
