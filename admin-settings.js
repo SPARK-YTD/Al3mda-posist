@@ -59,7 +59,7 @@ export async function renderSettings(container) {
       </div>
 
       <div style="background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2);border-radius:10px;padding:12px;margin-top:14px;font-size:12px;color:var(--text-secondary);line-height:1.7">
-        ⚠️ <strong style="color:#fca5a5">تنبيه:</strong> كلمة المرور لازم 6 أحرف على الأقل. بعد التغيير، استخدم الجديدة في الدخول.
+        ⚠️ <strong style="color:var(--danger)">تنبيه:</strong> كلمة المرور لازم 6 أحرف على الأقل. بعد التغيير، استخدم الجديدة في الدخول.
       </div>
 
       <button class="btn primary" id="changePassword" style="margin-top:16px;width:auto;padding:12px 28px">🔄 تغيير الباسورد</button>
