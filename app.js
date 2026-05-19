@@ -1,26 +1,61 @@
 import { supabase } from "./supabase.js";
 import { state } from "./state.js";
 import { cart, addToCart, renderCart, clearCart, getCartTotals } from "./cart.js";
+import {
+  startConnectionMonitor,
+  refreshCacheFromServer,
+  saveOrderSmart,
+  syncPendingOrders,
+  getOnlineState,
+  onConnectionChange,
+  getOfflineSummary
+} from "./offline-sync.js";
+import {
+  getReferenceData,
+  getByIndex,
+  STORES
+} from "./offline-db.js";
 
 let categories = [];
 let items = [];
 let currentCategory = null;
 let pendingOrders = [];
 let pendingTimer = null;
+let isOffline = !navigator.onLine;
 
 window.addEventListener("error", (e) => console.error("🔥 ERROR:", e.error));
 window.addEventListener("unhandledrejection", (e) => console.error("🔥 PROMISE ERROR:", e.reason));
 
-/* ========== تحميل الإعدادات ========== */
+/* ========== تحميل الإعدادات (مع دعم offline) ========== */
 async function loadSettings() {
-  const { data, error } = await supabase
-    .from("settings")
-    .select("*")
-    .eq("id", 1)
-    .single();
+  let data = null;
 
-  if (error || !data) {
-    console.error("settings:", error);
+  if (navigator.onLine) {
+    const result = await supabase
+      .from("settings")
+      .select("*")
+      .eq("id", 1)
+      .single();
+
+    if (!result.error) {
+      data = result.data;
+    } else {
+      console.warn("[Offline] فشل تحميل الإعدادات من السيرفر، سأجرب من الكاش");
+    }
+  }
+
+  // Fallback للكاش
+  if (!data) {
+    try {
+      const cached = await getReferenceData();
+      data = cached.settings;
+    } catch (err) {
+      console.error("[Offline] فشل قراءة الإعدادات من الكاش:", err);
+    }
+  }
+
+  if (!data) {
+    console.error("ما تم تحميل الإعدادات لا من السيرفر ولا من الكاش");
     return;
   }
 
@@ -34,16 +69,29 @@ async function loadSettings() {
   document.title = `${state.storeName} - الكاشير`;
 }
 
-/* ========== تحميل الفئات ========== */
+/* ========== تحميل الفئات (مع دعم offline) ========== */
 async function loadCategories() {
-  const { data, error } = await supabase
-    .from("categories")
-    .select("*")
-    .order("sort_order");
+  let data = null;
 
-  if (error) {
-    console.error(error);
-    return;
+  if (navigator.onLine) {
+    const result = await supabase
+      .from("categories")
+      .select("*")
+      .order("sort_order");
+
+    if (!result.error) {
+      data = result.data;
+    }
+  }
+
+  // Fallback للكاش
+  if (!data) {
+    try {
+      const cached = await getReferenceData();
+      data = cached.categories;
+    } catch (err) {
+      console.error("[Offline] فشل قراءة الفئات من الكاش:", err);
+    }
   }
 
   categories = data || [];
@@ -51,7 +99,10 @@ async function loadCategories() {
   box.innerHTML = "";
 
   if (categories.length === 0) {
-    box.innerHTML = `<div style="color:var(--text-muted)">ما فيه فئات. أضف من صفحة الإدارة.</div>`;
+    const msg = navigator.onLine
+      ? `ما فيه فئات. أضف من صفحة الإدارة.`
+      : `🔌 لا توجد بيانات محلية. افتح التطبيق مرة وأنت متصل.`;
+    box.innerHTML = `<div style="color:var(--text-muted)">${msg}</div>`;
     return;
   }
 
@@ -73,20 +124,32 @@ async function loadCategories() {
   }
 }
 
-/* ========== تحميل المنتجات ========== */
+/* ========== تحميل المنتجات (مع دعم offline) ========== */
 async function loadItems(categorySlug) {
   currentCategory = categorySlug;
+  let data = null;
 
-  const { data, error } = await supabase
-    .from("products")
-    .select("*")
-    .eq("category", categorySlug)
-    .eq("is_active", true)
-    .order("name");
+  if (navigator.onLine) {
+    const result = await supabase
+      .from("products")
+      .select("*")
+      .eq("category", categorySlug)
+      .eq("is_active", true)
+      .order("name");
 
-  if (error) {
-    console.error(error);
-    return;
+    if (!result.error) {
+      data = result.data;
+    }
+  }
+
+  // Fallback للكاش
+  if (!data) {
+    try {
+      const all = await getByIndex(STORES.products, "category", categorySlug);
+      data = all.filter(p => p.is_active).sort((a, b) => a.name.localeCompare(b.name));
+    } catch (err) {
+      console.error("[Offline] فشل قراءة المنتجات من الكاش:", err);
+    }
   }
 
   items = data || [];
@@ -137,18 +200,39 @@ function renderItems() {
   });
 }
 
-/* ========== نقر على منتج ========== */
+/* ========== نقر على منتج (مع دعم offline) ========== */
 async function handleItemClick(item) {
-  const { data: groups, error } = await supabase
-    .from("product_modifier_groups")
-    .select("group_id, sort_order, modifier_groups(*)")
-    .eq("product_id", item.id)
-    .order("sort_order");
+  let groups = null;
 
-  if (error) {
-    console.error(error);
-    addToCart(item, []);
-    return;
+  if (navigator.onLine) {
+    const { data, error } = await supabase
+      .from("product_modifier_groups")
+      .select("group_id, sort_order, modifier_groups(*)")
+      .eq("product_id", item.id)
+      .order("sort_order");
+
+    if (!error) groups = data;
+  }
+
+  // Fallback للكاش
+  if (!groups) {
+    try {
+      const pmgs = await getByIndex(STORES.product_modifier_groups, "product_id", item.id);
+      const allGroups = await getReferenceData();
+      const groupsMap = new Map(allGroups.modifier_groups.map(g => [g.id, g]));
+
+      groups = pmgs
+        .map(pmg => ({
+          group_id: pmg.group_id,
+          sort_order: pmg.sort_order || 0,
+          modifier_groups: groupsMap.get(pmg.group_id)
+        }))
+        .filter(g => g.modifier_groups)
+        .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+    } catch (err) {
+      console.error("[Offline] فشل تحميل المجموعات:", err);
+      groups = [];
+    }
   }
 
   if (!groups || groups.length === 0) {
@@ -162,12 +246,31 @@ async function handleItemClick(item) {
 /* ========== بوب أب الإضافات ========== */
 async function openModifiersPopup(item, productGroups) {
   const groupIds = productGroups.map(g => g.group_id);
-  const { data: allModifiers } = await supabase
-    .from("modifiers")
-    .select("*")
-    .in("group_id", groupIds)
-    .eq("is_active", true)
-    .order("sort_order");
+  let allModifiers = null;
+
+  if (navigator.onLine) {
+    const result = await supabase
+      .from("modifiers")
+      .select("*")
+      .in("group_id", groupIds)
+      .eq("is_active", true)
+      .order("sort_order");
+
+    if (!result.error) allModifiers = result.data;
+  }
+
+  // Fallback للكاش
+  if (!allModifiers) {
+    try {
+      const cached = await getReferenceData();
+      allModifiers = cached.modifiers
+        .filter(m => groupIds.includes(m.group_id) && m.is_active)
+        .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+    } catch (err) {
+      console.error("[Offline] فشل تحميل الإضافات:", err);
+      allModifiers = [];
+    }
+  }
 
   const groupsWithMods = productGroups.map(pg => ({
     group: pg.modifier_groups,
@@ -415,7 +518,7 @@ async function openModifiersPopup(item, productGroups) {
     if (totalEl) totalEl.textContent = `${total.toFixed(3)} ${state.currency}`;
   }
 }
-/* ========== حفظ الطلب (بدون دفع) ========== */
+/* ========== حفظ الطلب (بدون دفع - مع دعم offline) ========== */
 window.saveOrder = async function () {
   if (cart.length === 0) {
     showAlert("السلة فاضية");
@@ -429,44 +532,27 @@ window.saveOrder = async function () {
   btn.textContent = "جاري الحفظ...";
 
   try {
-    const { data: order, error } = await supabase
-      .from("orders")
-      .insert({
-        subtotal,
-        tax,
-        total,
-        status: "open",
-        payment_method: null,
-        cash_amount: 0,
-        card_amount: 0
-      })
-      .select()
-      .single();
+    const orderData = {
+      subtotal,
+      tax,
+      total,
+      status: "open",
+      payment_method: null,
+      cash_amount: 0,
+      card_amount: 0
+    };
 
-    if (error) throw error;
+    const result = await saveOrderSmart(orderData, [...cart]);
 
-    const orderItems = cart.map(item => ({
-      order_id: order.id,
-      product_id: item.product_id,
-      name: item.name,
-      base_price: item.base_price,
-      modifiers_total: item.modifiers_total,
-      unit_price: item.unit_price,
-      qty: item.qty,
-      subtotal: item.unit_price * item.qty,
-      modifiers_json: item.modifiers || []
-    }));
+    if (result.mode === "offline") {
+      showToast(`💾 حُفظ محلياً (${result.display_number}) - سيُزامن لما يرجع النت`);
+    } else {
+      showToast(`✅ تم حفظ الطلب #${result.display_number}`);
+    }
 
-    const { error: itemsError } = await supabase
-      .from("order_items")
-      .insert(orderItems);
-
-    if (itemsError) throw itemsError;
-
-    const displayNum = order.daily_number || order.order_number;
-    showToast(`✅ تم حفظ الطلب #${displayNum}`);
     clearCart();
     loadPendingOrders();
+    updateOfflineIndicator();
 
   } catch (err) {
     console.error(err);
@@ -477,27 +563,60 @@ window.saveOrder = async function () {
   }
 };
 
-/* ========== تحميل الطلبات المعلقة (اليوم فقط) ========== */
+/* ========== تحميل الطلبات المعلقة (اليوم فقط - مع طلبات offline) ========== */
 async function loadPendingOrders() {
-  // التاريخ الحالي بتوقيت البحرين
-  const todayBahrain = new Date(
-    new Date().toLocaleString("en-US", { timeZone: "Asia/Bahrain" })
-  );
-  const todayStr = todayBahrain.toISOString().split("T")[0];
+  // حساب صحيح لتاريخ اليوم بتوقيت البحرين (UTC+3)
+  // en-CA يعطي YYYY-MM-DD مباشرة
+  const todayStr = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Bahrain" }).format(new Date());
 
-  const { data, error } = await supabase
-    .from("orders")
-    .select("*, order_items(*)")
-    .in("status", ["open", "paid"])
-    .eq("order_date", todayStr)
-    .order("created_at", { ascending: true });
+  // نطاق اليوم الكامل بتوقيت البحرين
+  const fromISO = new Date(todayStr + "T00:00:00+03:00").toISOString();
+  const toISO   = new Date(todayStr + "T23:59:59+03:00").toISOString();
 
-  if (error) {
-    console.error(error);
-    return;
+  let serverOrders = [];
+
+  if (navigator.onLine) {
+    const { data, error } = await supabase
+      .from("orders")
+      .select("*, order_items(*)")
+      .in("status", ["open", "paid"])
+      .gte("created_at", fromISO)
+      .lte("created_at", toISO)
+      .order("created_at", { ascending: true });
+
+    if (!error) {
+      serverOrders = data || [];
+    } else {
+      console.warn("[Offline] فشل تحميل الطلبات من السيرفر");
+    }
   }
 
-  pendingOrders = data || [];
+  // أضف الطلبات المحلية (التي لم تتزامن بعد)
+  try {
+    const { getPendingOrders: getLocalPending } = await import("./offline-db.js");
+    const local = await getLocalPending();
+
+    const localAsOrders = local.map(record => ({
+      id: `local_${record.temp_id}`,
+      temp_id: record.temp_id,
+      is_local: true,
+      ...record.order,
+      created_at: record.created_at,
+      daily_number: `محلي-${record.temp_id.slice(-4)}`,
+      order_number: record.temp_id,
+      order_items: record.items.map(it => ({
+        ...it,
+        subtotal: it.unit_price * it.qty,
+        modifiers_json: it.modifiers || []
+      }))
+    }));
+
+    pendingOrders = [...serverOrders, ...localAsOrders];
+  } catch (err) {
+    console.error("[Offline] فشل تحميل الطلبات المحلية:", err);
+    pendingOrders = serverOrders;
+  }
+
   renderPendingOrders();
 }
 
@@ -520,9 +639,17 @@ function renderPendingOrders() {
     const card = document.createElement("div");
     card.className = "pending-card";
 
+    // طلب محلي (offline) - معاملة خاصة
+    if (order.is_local) {
+      card.classList.add("local-pending");
+      card.style.cssText = "border:2px dashed var(--warning);background:rgba(217,119,6,0.05)";
+    }
+
     const ageMinutes = (Date.now() - new Date(order.created_at).getTime()) / 60000;
 
-    if (order.status === "paid") {
+    if (order.is_local) {
+      // الطلبات المحلية ما يكون لها لون عمر، بس وسم "محلي"
+    } else if (order.status === "paid") {
       card.classList.add("paid");
     } else if (ageMinutes > 60) {
       card.classList.add("old");
@@ -537,16 +664,24 @@ function renderPendingOrders() {
     // رأس
     const header = document.createElement("div");
     header.className = "pending-header";
+    const ageLabel = order.is_local ? "💾 محلي" : formatAge(ageMinutes);
     header.innerHTML = `
       <div class="pending-num">#${orderNum}</div>
-      <div class="pending-time">${formatAge(ageMinutes)}</div>
+      <div class="pending-time">${ageLabel}</div>
     `;
     card.appendChild(header);
 
     // حالة
     const statusEl = document.createElement("div");
-    statusEl.className = `pending-status ${order.status === 'paid' ? 'paid' : 'unpaid'}`;
-    statusEl.textContent = order.status === "paid" ? "✅ مدفوع" : "⏳ في انتظار الدفع";
+    if (order.is_local) {
+      statusEl.className = "pending-status unpaid";
+      statusEl.style.background = "rgba(217,119,6,0.15)";
+      statusEl.style.color = "var(--warning)";
+      statusEl.textContent = "💾 محفوظ محلياً - بانتظار النت";
+    } else {
+      statusEl.className = `pending-status ${order.status === 'paid' ? 'paid' : 'unpaid'}`;
+      statusEl.textContent = order.status === "paid" ? "✅ مدفوع" : "⏳ في انتظار الدفع";
+    }
     card.appendChild(statusEl);
 
     // العناصر (مختصرة)
@@ -582,6 +717,25 @@ function renderPendingOrders() {
     viewBtn.textContent = "👁 عرض";
     viewBtn.onclick = () => showOrderDetails(order);
     actions.appendChild(viewBtn);
+
+    // الطلبات المحلية: فقط عرض وحذف (لا دفع ولا تسليم لأنها مو في السيرفر)
+    if (order.is_local) {
+      const cancelBtn = document.createElement("button");
+      cancelBtn.className = "btn secondary";
+      cancelBtn.textContent = "🗑 حذف محلي";
+      cancelBtn.onclick = async () => {
+        if (!confirm(`حذف الطلب المحلي #${orderNum}؟ (لن يُحفظ في السيرفر)`)) return;
+        const { removePendingOrder } = await import("./offline-db.js");
+        await removePendingOrder(order.temp_id);
+        showToast(`🗑 تم حذف الطلب المحلي`);
+        loadPendingOrders();
+        updateOfflineIndicator();
+      };
+      actions.appendChild(cancelBtn);
+      card.appendChild(actions);
+      box.appendChild(card);
+      return; // skip rest for local orders
+    }
 
     if (order.status === "open") {
       const payBtn = document.createElement("button");
@@ -1001,13 +1155,57 @@ function escapeHtml(str) {
   return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
+/* ========== مؤشر حالة الاتصال ========== */
+function ensureOfflineIndicator() {
+  let indicator = document.getElementById("offlineIndicator");
+  if (indicator) return indicator;
+
+  indicator = document.createElement("div");
+  indicator.id = "offlineIndicator";
+  indicator.style.cssText = `
+    position: fixed;
+    top: 12px;
+    left: 12px;
+    z-index: 9999;
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 700;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    display: none;
+    align-items: center;
+    gap: 6px;
+    pointer-events: none;
+  `;
+  document.body.appendChild(indicator);
+  return indicator;
+}
+
+async function updateOfflineIndicator() {
+  const indicator = ensureOfflineIndicator();
+  const summary = await getOfflineSummary();
+
+  if (!summary.online) {
+    indicator.style.display = "flex";
+    indicator.style.background = "linear-gradient(135deg, #dc2626, #b91c1c)";
+    indicator.style.color = "#fff";
+    indicator.textContent = `🔌 أوفلاين${summary.pendingOrdersCount > 0 ? ` · ${summary.pendingOrdersCount} طلب معلق` : ""}`;
+  } else if (summary.pendingOrdersCount > 0) {
+    indicator.style.display = "flex";
+    indicator.style.background = "linear-gradient(135deg, #d97706, #b45309)";
+    indicator.style.color = "#fff";
+    indicator.textContent = `⏳ مزامنة ${summary.pendingOrdersCount} طلب...`;
+  } else {
+    indicator.style.display = "none";
+  }
+}
+
 /* ========== فحص تغيّر اليوم (للتصفير التلقائي) ========== */
 let currentDayBahrain = getCurrentBahrainDate();
 
 function getCurrentBahrainDate() {
-  const now = new Date();
-  return new Date(now.toLocaleString("en-US", { timeZone: "Asia/Bahrain" }))
-    .toISOString().split("T")[0];
+  // en-CA يعطي YYYY-MM-DD مباشرة بدون خطأ في التحويل
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Bahrain" }).format(new Date());
 }
 
 function checkDayChange() {
@@ -1020,31 +1218,84 @@ function checkDayChange() {
   }
 }
 
+/* ========== تسجيل Service Worker ========== */
+async function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) {
+    console.warn("[SW] المتصفح ما يدعم Service Workers");
+    return;
+  }
+  try {
+    const reg = await navigator.serviceWorker.register("./sw.js");
+    console.log("[SW] ✅ مسجّل:", reg.scope);
+  } catch (err) {
+    console.error("[SW] فشل التسجيل:", err);
+  }
+}
+
 /* ========== بدء التشغيل ========== */
 window.addEventListener("DOMContentLoaded", async () => {
+  // 1. سجل Service Worker (للكاش)
+  registerServiceWorker();
+
+  // 2. ابدأ مراقبة الاتصال
+  startConnectionMonitor();
+
+  // 3. اشترك في تغييرات الاتصال
+  onConnectionChange(async (state) => {
+    if (state.online) {
+      // رجع النت
+      if (state.syncResult && state.syncResult.synced > 0) {
+        showToast(`✅ تم مزامنة ${state.syncResult.synced} طلب`);
+      }
+      // أعد تحميل الطلبات
+      loadPendingOrders();
+    } else {
+      showToast("🔌 انقطع النت - الكاشير يشتغل أوفلاين");
+    }
+    updateOfflineIndicator();
+  });
+
+  // 4. حمّل البيانات
   await loadSettings();
   await loadCategories();
   await loadPendingOrders();
   renderCart();
+  updateOfflineIndicator();
 
-  // تحديث أعمار الطلبات + فحص تغيّر اليوم كل 30 ثانية
+  // 5. حدّث الكاش في الخلفية إذا متصل
+  if (navigator.onLine) {
+    refreshCacheFromServer().catch(err => console.error(err));
+    // جرّب مزامنة أي طلبات معلقة
+    syncPendingOrders().then(result => {
+      if (result.synced > 0) {
+        showToast(`✅ تم مزامنة ${result.synced} طلب معلق`);
+        loadPendingOrders();
+      }
+    }).catch(err => console.error(err));
+  }
+
+  // 6. تحديث أعمار الطلبات + فحص تغيّر اليوم + مؤشر الاتصال كل 30 ثانية
   pendingTimer = setInterval(() => {
     checkDayChange();
     if (pendingOrders.length > 0) renderPendingOrders();
+    updateOfflineIndicator();
   }, 30000);
 });
 
-/* ========== Realtime ========== */
+/* ========== Realtime (يشتغل بس لو online) ========== */
 supabase
   .channel("pos-live")
   .on("postgres_changes", { event: "*", schema: "public", table: "products" }, () => {
     if (currentCategory) loadItems(currentCategory);
+    refreshCacheFromServer().catch(() => {}); // حدّث الكاش
   })
   .on("postgres_changes", { event: "*", schema: "public", table: "categories" }, () => {
     loadCategories();
+    refreshCacheFromServer().catch(() => {});
   })
   .on("postgres_changes", { event: "UPDATE", schema: "public", table: "settings" }, () => {
     loadSettings().then(renderCart);
+    refreshCacheFromServer().catch(() => {});
   })
   .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, () => {
     loadPendingOrders();
