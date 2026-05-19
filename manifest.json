@@ -1,0 +1,26 @@
+{
+  "name": "العمدة - نظام كاشير",
+  "short_name": "العمدة",
+  "description": "نظام كاشير للوجبات الخفيفة",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#faf6f0",
+  "theme_color": "#b8860b",
+  "lang": "ar",
+  "dir": "rtl",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='80' fill='%23b8860b'/%3E%3Ctext x='50%25' y='62%25' text-anchor='middle' font-size='280' fill='%23fff' font-family='Arial'%3E☕%3C/text%3E%3C/svg%3E",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='30' fill='%23b8860b'/%3E%3Ctext x='50%25' y='62%25' text-anchor='middle' font-size='110' fill='%23fff' font-family='Arial'%3E☕%3C/text%3E%3C/svg%3E",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
